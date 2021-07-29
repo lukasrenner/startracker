@@ -1,0 +1,89 @@
+# µC
+MCU=atmega328p
+# µC freq. Arduino uses 16MHz cristal
+F_CPU=16000000
+# output format
+FORMAT=ihex
+
+# target file name
+TARGET=startracker
+
+#lisr C source files here. (C dependencies are automatically generated.)
+SRC = $(wildcard *.c)
+
+# object files directory
+OBJDIR = obj
+
+# optimization level [0,1,2,3s]
+OPTLVL=2
+
+# debugging format
+DEBUG=dwarf-2
+
+# extra dirs for include files
+EXTRAINCDIRS=/usr/avr/include/ 
+
+# compiler flag for c standard
+CSTANDARD=-std=gnu99
+
+# compiler options
+CFLAGS=-g$(DEBUG)
+CFLAGS+=-O$(OPTLVL)
+CFLAGS+=-Wall
+CFLAGS+=$(CSTANDARD)
+CFLAGS+=$(patsubst %,-I%,$(EXTRAINCDIRS))
+CFLAGS+=-DF_CPU=$(F_CPU)
+
+# linker flags
+LDFLAGS= -Wl,-Map=$(TARGET).map,--cref
+
+#programmer
+AVRDUDE_PROGRAMMER=arduino
+# port
+AVRDUDE_PORT=/dev/ttyUSB0
+#AVRDUDE_PORT=/dev/ttyACM0
+# baudrate
+AVRDUDE_BAUDRATE=115200
+# verbosity level
+AVRDUDE_VERBOSE=-v -v
+# flash
+AVRDUDE_WRITE_FLASH=-D -U flash:w:$(TARGET).hex:i
+# combine all flags
+AVRDUDE_FLAGS= -p $(MCU) -c $(AVRDUDE_PROGRAMMER) -P $(AVRDUDE_PORT) -b $(AVRDUDE_BAUDRATE) $(AVRDUDE_VERBOSE)
+
+# define all object files
+#OBJ=$(SRC:%.c=$(OBJDIR)/%.o)
+OBJ=$(SRC:.c=.o)
+
+# combine all cflags
+ALL_CFLAGS = -mmcu=$(MCU) -I. $(CFLAGS)
+
+ #default target
+all: build upload
+
+
+build:	hex
+	@echo "Building..."
+
+hex: $(TARGET).hex
+
+upload: $(TARGET).hex
+	@echo "Uploading..."
+	@avrdude $(AVRDUDE_FLAGS) $(AVRDUDE_WRITE_FLASH)
+
+%.hex: %.elf
+	@echo "Creating hex from elf..."
+	@avr-objcopy -O $(FORMAT) $< $@
+
+%.elf: $(OBJ)
+	@echo "Linking..."
+#@avr-gcc $(ALL_CFLAGS) $^ --output $@ $(LDFLAGS)
+	@avr-gcc $(ALL_CFLAGS) $(OBJ) --output $@ $(LDFLAGS)
+
+%.o : %.c
+	@echo "Compiling..."
+	@avr-gcc -c $(ALL_CFLAGS) $< -o $@
+
+read_fuses:
+	@echo "reading fuses..."
+	@avrdude $(AVRDUDE_FLAGS)
