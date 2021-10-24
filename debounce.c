@@ -12,9 +12,24 @@ uint8_t previousState = 0;
    updated everytime debouncePort is called
    has to be cleared everytiem the application checks for presses */
 volatile uint8_t buttonPresses = 0;
+
+/* similar to above, 1 indicates that button is down (switch closed) */
+volatile uint8_t buttonDown = 0;
+
+/* similar to above, 1 indicates that button is up (switch open) */
+volatile uint8_t buttonUp = 0;
+
 /* array of pointers to functions that will be called
    when the corresponding button is pushed */
-buttonFunc_t buttonFuncs[8] = {0}; 
+buttonFunc_t buttonFuncs[8] = {0};
+
+/* array of pointers to functions that will be called
+   when the corresponding button is up (switch open) */
+buttonFunc_t buttonUpFuncs[8] = {0}; 
+
+/* array of pointers to functions that will be called
+   when the corresponding button is down (switch closed) */
+buttonFunc_t buttonDownFuncs[8] = {0}; 
 
 void setupDebounce(){
 
@@ -36,22 +51,27 @@ void setupDebounce(){
 static void debouncePort(){
   uint8_t i;
   uint8_t tmpState = 0xFF;
+  uint8_t invTmpState = 0xFF;
   
   /* save last debounced state */
   previousState = debouncedState;
 
   /* get input */
   state[checkIndex] = INPORT;
+  checkIndex++;
 
   /* perform debouncing and save state */
-  checkIndex++;
   for(i = 0; i < NUM_CHECKS; i++){
     tmpState = tmpState & state[i];
+    invTmpState = invTmpState & ~(state[i]);
   }
   debouncedState = tmpState;
+  buttonUp = invTmpState;
+  buttonDown = tmpState;
 
   /* check for buttonpresses, i.e. transition from 
-     pressed to not-pressed and save */
+     pressed to not-pressed and save.
+     This variable is reset below. */
   buttonPresses |= (previousState ^ debouncedState) & previousState;
   
   /* update index with wraparound */
@@ -83,14 +103,38 @@ void registerFuncButtonPress(buttonFunc_t pFunc, uint8_t buttonNum){
   return;
 }
 
+void registerFuncButtonDown(buttonFunc_t pFunc, uint8_t buttonNum){
+  buttonDownFuncs[buttonNum] = pFunc;
+  return;
+}
+
+void registerFuncButtonUp(buttonFunc_t pFunc, uint8_t buttonNum){
+  buttonUpFuncs[buttonNum] = pFunc;
+  return;
+}
+
 void handleButtonPresses(){
 
-  for(uint8_t i=0; i < sizeof(uint8_t); i++){
+
+  for(uint8_t i=0; i < sizeof(uint8_t) * 8; i++){
+
+    // handle button presses
     if((buttonFuncs[i] != 0) && ((buttonPresses & (1 << i)) != 0)){
       buttonFuncs[i]();
     }
+
+    // handle functions to be executed when a button is down
+    if((buttonDownFuncs[i] != 0) && ((buttonDown & (1 << i)) != 0)){
+      buttonDownFuncs[i]();
+    }
+
+    // handle functions to be executed when a button is up
+    if((buttonUpFuncs[i] != 0) && ((buttonUp & (1 << i)) != 0)){
+      buttonUpFuncs[i]();
+    }
+
   }
-  if(buttonPresses) buttonFuncs[1]();
+  //  if(buttonPresses) buttonFuncs[1]();
   buttonPresses = 0;
 
   return;

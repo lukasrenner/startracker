@@ -7,10 +7,10 @@
 #define NUM_CHECKS (5u)
 
 /* input port */
-#define INPORT (PINC)
+#define INPORT (PINB)
 
 /* delay between each check */
-#define TIME_BETWEEN_CHECKS_MS (5)
+#define TIME_BETWEEN_CHECKS_MS (10)
 
 /* which timer to use, indicated by its number (as in the datasheet) */
 #define TIMERNUM 0
@@ -75,5 +75,7 @@ void setupDebounce();
 uint8_t isButtonPressed(uint8_t buttonNum);
 uint8_t getButtonPresses();
 void registerFuncButtonPress(buttonFunc_t pFunc, uint8_t buttonNum);
+void registerFuncButtonDown(buttonFunc_t pFunc, uint8_t buttonNum);
+void registerFuncButtonUp(buttonFunc_t pFunc, uint8_t buttonNum);
 void handleButtonPresses();
 #endif

@@ -1,129 +1,156 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <math.h>
+
+#include "startracker.h"
 #include "debounce.h"
 
 
-// The starting radius in mm, i.e. the intersection of the threaded rod with the baseplate at phi = 0
-#define R_0 (200)
+// current state of the startracker
+state_t trackerState;
 
-// The maximum allowed length in mm, i.e. the length of the threaded rod. This is used to prevent the motor from turning, when the end is reached. Can be used to maybe play a sound for notification
-#define L_MAX (200)
+//  total number of steps performed. Steps in the closing direction are subtracted
+uint32_t currentSteps;
 
-// Conversion factor to calculate the frequency of steps for a given L and R (corrected). Unit is steps / (second * meter)
-#define C_F (29.16846F)
+// distance that the rod has travelled (i.e. the length) in mm (this is our x in f(x) = ...)
+float currentLength;
 
-// How much the length of the rod increases per step. Unit is  meter / step
-#define INC_STEP (0.0000025)
-
-// Frequency of TIMER1
-#define FREQ_TIMER1 (16000000 / 1024)
-
-// Time that one rotation should take (for debugging)
-#define T_DEBUG (10)
-
-// Steps per rotation (with microsteps)
-#define STEPS_PER_ROT (3200)
-
-// Debugging
-#define ISR1_DEBUG ((uint16_t)((T_DEBUG * FREQ_TIMER1 / STEPS_PER_ROT)))
-
-// Steps per second when rewinding (3200 steps = 1 rotation)
-#define STEPS_PER_SEC_RW (6200)
-
-// Counts to be loaded into register ICR1 when rewinding
-#define RW_OC 
-
-// ----------- defines for timer mode ---------------
-
-#define BIT_WGM10 (0<<WGM10)
-#define BIT_WGM11 (1<<WGM11)
-#define BIT_WGM12 (1<<WGM12)
-#define BIT_WGM13 (1<<WGM13)
-#define BIT_COM1A0 (0<<COM1A0)
-#define BIT_COM1A1 (1<<COM1A1)
-#define BIT_CS10 (1<<CS10)
-#define BIT_CS11 (0<<CS11)
-#define BIT_CS12 (1<<CS12)
-
-
-// Output pin for step pulse
-#define BIT_OUT_STEP (1 << PORTB1)
-#define BIT_DIR_STEP (1 << DDB1)
-
-// Output pin for direction
-#define BIT_OUT_DIR (1 << PORTD2)
-#define BIT_DIR_DIR (1 << DDD2)
-
-// ---------- defines for buttons and stuff -----------------
-
-#define BIT_OUT_LED (1<< PORTB5)
-#define BIT_DIR_LED (1 << DDB5)
-#define BIT_PIN_BUTTON1 (1 << PINC0)
-#define BIT_DIR_BUTTON1 (1 << DDC0)
-#define BIT_PIN_BUTTON2 (1 << PINC1)
-#define BIT_DIR_BUTTON2 (1 << DDC1)
-
-uint16_t calcNextSteps(uint32_t *currSteps){
-
+void updateStepFreq() {
+  // update length
+  currentLength = currentSteps * INC_STEP;
+  // calc radius correction
+  float corr = D_CORR * currentLength/(sqrt(4*(uint16_t)R_0*R_0 - currentLength*currentLength));
+  float corrR = R_0 - corr;
+  // calc step frequency
+  float fStep = C_F * corrR * (1 - (currentLength*currentLength/(4*corrR*corrR)));
+  // write to register ISR1
+  ICR1 = FREQ_TIMER1 / fStep;
+  // set register OCR1A accordingly
+  OCR1A = ICR1 / 2;
 }
 
 void turnOnOff(){
-  TCCR1B ^= BIT_CS10 | BIT_CS12; 
+  TCCR1B ^= BIT_CS10 | BIT_CS12;
+}
+
+void turnOn(){
+  TCCR1B |= BIT_CS10 | BIT_CS12;
+}
+
+void turnOff(){
+  TCCR1B &= ~(BIT_CS10 | BIT_CS12);
+}
+
+
+void stopMoving() {
+  trackerState = IDLE;
+  turnOff();
 }
 
 void changeDir(){
-  PORTD ^= BIT_OUT_DIR;
+  PORTC ^= BIT_OUT_DIR;
 }
 
 void toggleLed(){
   PORTB ^= BIT_OUT_LED;
 }
 
+void setDir(rotDir_t dir) {
+
+  if (dir == OPEN) {
+    PORTC |= BIT_OUT_DIR;
+  } else {
+    PORTC &= ~BIT_OUT_DIR;
+  }
+  return;
+}
+
+void startTracking() {
+  
+  if (trackerState != TRACKING) {
+    // debugging
+    TCNT1 = 0;
+    updateStepFreq();
+    trackerState = TRACKING;
+    setDir(OPEN);
+    turnOn();
+  }
+  return;
+}
+
+void rewind(){
+  
+  if (trackerState != REWIND) {
+    // change the speed when rewinding
+    TCNT1 = 0;
+    ICR1 = ICR1_DEBUG;
+    OCR1A = ICR1 / 2;
+    trackerState = REWIND;
+    setDir(CLOSE);
+    turnOn();
+  }
+  return;
+}
+
 void setup(){
+
+  trackerState = IDLE;
+  currentSteps = 0u;
 
   // turn on interrupts
   sei();
   // Configure timer 1
   TCCR1A = BIT_WGM11 | BIT_COM1A0 | BIT_COM1A1;
-  TCCR1B = BIT_CS10 | BIT_CS12 | BIT_WGM12 | BIT_WGM13;
-  ICR1 = ISR1_DEBUG;
-  OCR1A = 10;
+  TCCR1B = BIT_WGM12 | BIT_WGM13;
+  // enable interrupt on compare match OCR1A
+  TIMSK1 |= BIT_OCIE1A;
+  // configure interrupt
+  
+
 
   // outputs
-  DDRD = BIT_DIR_DIR;
-  PORTD = BIT_OUT_DIR;
-  DDRB = BIT_DIR_STEP | BIT_DIR_LED;
-
-  // inputs
-  DDRC = 0;
-
+  DDRC = BIT_DIR_DIR;
+  DDRB |= BIT_DIR_STEP;
+  DDRB |= BIT_DIR_LED;
+  
+  DDRB &= ~BIT_DIR_BUTTON1;
+  PORTB &= ~BIT_PIN_BUTTON1;
+  
   // set up input and debouncing
   setupDebounce();
-  registerFuncButtonPress(&turnOnOff, 0);
-  registerFuncButtonPress(&changeDir, 1);
-  
+
+  registerFuncButtonDown(&startTracking, 4u);
+  registerFuncButtonUp(&rewind, 4u);
 }
 
-typedef enum state_t {
-		      IDLE,
-		      TRACKING,
-		      REWIND,
-		      FAST_FORWARD,
-		      FAST_BACKWARD,
-		      END
-} state_t;
 
-// global variable to hold the total number of steps performed. Steps in the closing direction are subtracted
-uint32_t currentSteps;
+ISR(TIMER1_COMPA_vect, ISR_BLOCK) {
+
+  if (trackerState == TRACKING) {
+    if (currentSteps < MAX_STEPS) {   
+      if (currentSteps % 100 == 0u)
+        updateStepFreq();
+      currentSteps++;
+    } else
+      stopMoving();
+  } else if (trackerState == REWIND) {
+    if (currentSteps > 0)
+      currentSteps--;
+     else
+       stopMoving();
+  }
+}
+
 
 int main(){
 
   setup();
-  while(1){
-    //    if(isButtonPressed(0)) turnOnOff();
-    handleButtonPresses();
-  }  
   
+  while (1) {
+    handleButtonPresses();
+ 
+  };
+
   return 0;
 }
